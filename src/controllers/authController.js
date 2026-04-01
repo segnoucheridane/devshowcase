@@ -1,9 +1,10 @@
-const bcrypt        = require('bcryptjs');
-const crypto        = require('crypto');
-const { pool }      = require('../config/database');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const generateToken = require('../utils/generateToken');
-const sendResponse  = require('../utils/sendResponse');
-const ApiError      = require('../utils/ApiError');
+const sendResponse = require('../utils/sendResponse');
+const ApiError = require('../utils/ApiError');
+const { prisma } = require('../config/prisma');
+const userService = require('../services/UserService');
 
 const register = async (req, res, next) => {
   try {
@@ -17,36 +18,46 @@ const register = async (req, res, next) => {
       return next(new ApiError(400, 'Password must be at least 6 characters.'));
     }
 
-    const emailCheck = await pool.query(
-      'SELECT id FROM users WHERE email = $1',
-      [email.toLowerCase()]
-    );
-    if (emailCheck.rows.length > 0) {
+    // Check if email exists
+    const existingEmail = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() }
+    });
+    
+    if (existingEmail) {
       return next(new ApiError(409, 'An account with this email already exists.'));
     }
 
-    const usernameCheck = await pool.query(
-      'SELECT id FROM users WHERE username = $1',
-      [username]
-    );
-    if (usernameCheck.rows.length > 0) {
+    // Check if username exists
+    const existingUsername = await prisma.user.findUnique({
+      where: { username }
+    });
+    
+    if (existingUsername) {
       return next(new ApiError(409, 'This username is already taken.'));
     }
 
-    const hashed     = await bcrypt.hash(password, 12);
-    const safeRoles  = ['user', 'developer', 'investor', 'recruiter'];
-    const userRole   = safeRoles.includes(role) ? role : 'developer';
+    const hashed = await bcrypt.hash(password, 12);
+    const safeRoles = ['user', 'developer', 'investor', 'recruiter'];
+    const userRole = safeRoles.includes(role) ? role : 'developer';
 
-    const result = await pool.query(
-      `INSERT INTO users (username, email, password, role)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, username, email, role, is_verified, created_at`,
-      [username, email.toLowerCase(), hashed, userRole]
-    );
+    const newUser = await prisma.user.create({
+      data: {
+        username,
+        email: email.toLowerCase(),
+        password: hashed,
+        role: userRole,
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        is_verified: true,
+        created_at: true,
+      }
+    });
 
-    const newUser = result.rows[0];
-    const token   = generateToken(newUser.id);
-
+    const token = generateToken(newUser.id);
     sendResponse(res, 201, newUser, 'Account created successfully.', { token });
   } catch (err) {
     next(err);
@@ -61,12 +72,17 @@ const login = async (req, res, next) => {
       return next(new ApiError(400, 'Email and password are required.'));
     }
 
-    const result = await pool.query(
-      'SELECT id, username, email, password, role, is_active FROM users WHERE email = $1',
-      [email.toLowerCase()]
-    );
-
-    const user = result.rows[0];
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        password: true,
+        role: true,
+        is_active: true,
+      }
+    });
 
     if (!user) {
       return next(new ApiError(401, 'Invalid email or password.'));
@@ -93,19 +109,30 @@ const login = async (req, res, next) => {
 
 const getMe = async (req, res, next) => {
   try {
-    const result = await pool.query(
-      `SELECT id, username, email, role, bio, avatar, website, github,
-              linkedin, skills, reputation_score, is_verified, created_at
-       FROM users
-       WHERE id = $1`,
-      [req.user.id]
-    );
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        bio: true,
+        avatar: true,
+        website: true,
+        github: true,
+        linkedin: true,
+        skills: true,
+        reputation_score: true,
+        is_verified: true,
+        created_at: true,
+      }
+    });
 
-    if (!result.rows[0]) {
+    if (!user) {
       return next(new ApiError(404, 'User not found.'));
     }
 
-    sendResponse(res, 200, result.rows[0]);
+    sendResponse(res, 200, user);
   } catch (err) {
     next(err);
   }
@@ -136,29 +163,27 @@ const forgotPassword = async (req, res, next) => {
       return next(new ApiError(400, 'Email is required.'));
     }
 
-    const result = await pool.query(
-      'SELECT id FROM users WHERE email = $1 AND is_active = TRUE',
-      [email.toLowerCase()]
-    );
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase(), is_active: true },
+      select: { id: true }
+    });
 
-    const user = result.rows[0];
-
-    // Always return the same message — do not reveal if the email exists
     if (!user) {
       return sendResponse(res, 200, null, 'If that email is registered, a reset link will be sent.');
     }
 
-    const resetToken   = crypto.randomBytes(32).toString('hex');
+    const resetToken = crypto.randomBytes(32).toString('hex');
     const resetExpires = new Date(Date.now() + 60 * 60 * 1000);
 
-    await pool.query(
-      'UPDATE users SET password_reset_token = $1, password_reset_expires = $2 WHERE id = $3',
-      [resetToken, resetExpires, user.id]
-    );
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password_reset_token: resetToken,
+        password_reset_expires: resetExpires,
+      }
+    });
 
-    // In development: return token so you can test without email setup
     const data = process.env.NODE_ENV === 'development' ? { resetToken } : null;
-
     sendResponse(res, 200, data, 'If that email is registered, a reset link will be sent.');
   } catch (err) {
     next(err);
@@ -177,15 +202,14 @@ const resetPassword = async (req, res, next) => {
       return next(new ApiError(400, 'Password must be at least 6 characters.'));
     }
 
-    const result = await pool.query(
-      `SELECT id FROM users
-       WHERE password_reset_token = $1
-         AND password_reset_expires > NOW()
-         AND is_active = TRUE`,
-      [token]
-    );
-
-    const user = result.rows[0];
+    const user = await prisma.user.findFirst({
+      where: {
+        password_reset_token: token,
+        password_reset_expires: { gt: new Date() },
+        is_active: true,
+      },
+      select: { id: true }
+    });
 
     if (!user) {
       return next(new ApiError(400, 'This reset token is invalid or has expired.'));
@@ -193,15 +217,14 @@ const resetPassword = async (req, res, next) => {
 
     const hashed = await bcrypt.hash(newPassword, 12);
 
-    await pool.query(
-      `UPDATE users
-       SET password = $1,
-           password_reset_token = NULL,
-           password_reset_expires = NULL,
-           updated_at = NOW()
-       WHERE id = $2`,
-      [hashed, user.id]
-    );
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashed,
+        password_reset_token: null,
+        password_reset_expires: null,
+      }
+    });
 
     sendResponse(res, 200, null, 'Password updated. You can now log in.');
   } catch (err) {
@@ -217,25 +240,25 @@ const verifyEmail = async (req, res, next) => {
       return next(new ApiError(400, 'Verification token is required.'));
     }
 
-    const result = await pool.query(
-      'SELECT id FROM users WHERE email_verification_token = $1 AND is_active = TRUE',
-      [token]
-    );
-
-    const user = result.rows[0];
+    const user = await prisma.user.findFirst({
+      where: {
+        email_verification_token: token,
+        is_active: true,
+      },
+      select: { id: true }
+    });
 
     if (!user) {
       return next(new ApiError(400, 'Invalid verification token.'));
     }
 
-    await pool.query(
-      `UPDATE users
-       SET is_verified = TRUE,
-           email_verification_token = NULL,
-           updated_at = NOW()
-       WHERE id = $1`,
-      [user.id]
-    );
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        is_verified: true,
+        email_verification_token: null,
+      }
+    });
 
     sendResponse(res, 200, null, 'Email verified successfully.');
   } catch (err) {

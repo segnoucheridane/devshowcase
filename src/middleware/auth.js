@@ -1,6 +1,6 @@
-const jwt      = require('jsonwebtoken');
+const jwt = require('jsonwebtoken');
 const ApiError = require('../utils/ApiError');
-const { pool } = require('../config/database');
+const { prisma } = require('../config/prisma');
 
 const protect = async (req, res, next) => {
   try {
@@ -16,12 +16,16 @@ const protect = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    const result = await pool.query(
-      'SELECT id, username, email, role, is_active FROM users WHERE id = $1',
-      [decoded.id]
-    );
-
-    const user = result.rows[0];
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        is_active: true,
+      }
+    });
 
     if (!user) {
       return next(new ApiError(401, 'User no longer exists.'));
@@ -59,12 +63,16 @@ const optionalAuth = async (req, res, next) => {
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    const result = await pool.query(
-      'SELECT id, username, email, role, is_active FROM users WHERE id = $1',
-      [decoded.id]
-    );
-
-    const user = result.rows[0];
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        is_active: true,
+      }
+    });
 
     if (user && user.is_active) {
       req.user = user;

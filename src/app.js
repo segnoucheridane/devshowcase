@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors    = require('cors');
 const morgan  = require('morgan');
@@ -12,6 +11,7 @@ const userRoutes     = require('./routes/usersRoute');
 const adminRoutes    = require('./routes/adminRoute');
 const projectRoutes  = require('./routes/projectsRoute');
 const timelineRoutes = require('./routes/timelineRoute');
+const collaborationRoutes = require('./routes/collaborationsRoute');  // ADD THIS
 
 const app = express();
 
@@ -44,6 +44,7 @@ app.use('/api/users',    userRoutes);
 app.use('/api/admin',    adminRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/projects', timelineRoutes);
+app.use('/api/collaborations', collaborationRoutes);  // ADD THIS
 
 app.use(notFound);
 app.use(errorHandler);

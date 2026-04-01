@@ -1,7 +1,7 @@
-const { pool }             = require('../config/database');
-const sendResponse         = require('../utils/sendResponse');
-const ApiError             = require('../utils/ApiError');
+const sendResponse = require('../utils/sendResponse');
+const ApiError = require('../utils/ApiError');
 const { createUniqueSlug } = require('../utils/slugify');
+const { prisma } = require('../config/prisma');
 
 const listProjects = async (req, res, next) => {
   try {
@@ -17,78 +17,74 @@ const listProjects = async (req, res, next) => {
       forSale,
     } = req.query;
 
-    const offset     = (parseInt(page) - 1) * parseInt(limit);
-    const params     = [];
-    const conditions = ["p.visibility = 'public'"];
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
+
+    // Build where conditions
+    let where = {
+      visibility: 'public',
+    };
 
     if (search) {
-      params.push(`%${search}%`);
-      const n = params.length;
-      conditions.push(
-        `(p.title ILIKE $${n} OR p.description ILIKE $${n} OR p.problem_solved ILIKE $${n})`
-      );
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { description: { contains: search, mode: 'insensitive' } },
+        { problem_solved: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
     if (technology) {
-      params.push(`{${technology}}`);
-      conditions.push(`p.technologies @> $${params.length}::text[]`);
+      where.technologies = { has: technology };
     }
 
     if (industry) {
-      params.push(`{${industry}}`);
-      conditions.push(`p.industries @> $${params.length}::text[]`);
+      where.industries = { has: industry };
     }
 
     if (status) {
-      params.push(status);
-      conditions.push(`p.status = $${params.length}`);
+      where.status = status;
     }
 
-    if (fundingOpen === 'true') conditions.push(`p.is_funding_open = TRUE`);
-    if (forSale     === 'true') conditions.push(`p.is_for_sale = TRUE`);
+    if (fundingOpen === 'true') {
+      where.is_funding_open = true;
+    }
 
-    const where = 'WHERE ' + conditions.join(' AND ');
+    if (forSale === 'true') {
+      where.is_for_sale = true;
+    }
 
-    const sortOptions = {
-      created_at: 'p.created_at',
-      view_count:  'p.view_count',
-      like_count:  'p.like_count',
-    };
-    const orderBy = sortOptions[sort] || 'p.created_at';
+    // Determine sort order
+    let orderBy = {};
+    if (sort === 'created_at') orderBy = { created_at: 'desc' };
+    else if (sort === 'view_count') orderBy = { view_count: 'desc' };
+    else if (sort === 'like_count') orderBy = { like_count: 'desc' };
+    else orderBy = { created_at: 'desc' };
 
-    params.push(parseInt(limit));
-    const limitIdx = params.length;
+    const [projects, total] = await Promise.all([
+      prisma.project.findMany({
+        where,
+        skip,
+        take,
+        orderBy,
+        include: {
+          owner: {
+            select: {
+              id: true,
+              username: true,
+              avatar: true,
+            }
+          }
+        }
+      }),
+      prisma.project.count({ where })
+    ]);
 
-    params.push(offset);
-    const offsetIdx = params.length;
-
-    const rows = await pool.query(
-      `SELECT p.id, p.title, p.slug, p.description, p.status,
-              p.technologies, p.thumbnail_url, p.view_count, p.like_count,
-              p.is_featured, p.is_funding_open, p.funding_goal,
-              p.funding_raised, p.created_at,
-              u.id AS owner_id, u.username AS owner_username, u.avatar AS owner_avatar
-       FROM projects p
-       JOIN users u ON u.id = p.owner_id
-       ${where}
-       ORDER BY ${orderBy} DESC
-       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
-      params
-    );
-
-    const countResult = await pool.query(
-      `SELECT COUNT(*) FROM projects p ${where}`,
-      params.slice(0, params.length - 2)
-    );
-
-    const total = parseInt(countResult.rows[0].count);
-
-    sendResponse(res, 200, rows.rows, null, {
+    sendResponse(res, 200, projects, null, {
       pagination: {
         total,
-        page:  parseInt(page),
-        pages: Math.ceil(total / parseInt(limit)),
-        limit: parseInt(limit),
+        page: parseInt(page),
+        pages: Math.ceil(total / take),
+        limit: take,
       },
     });
   } catch (err) {
@@ -100,38 +96,58 @@ const getProject = async (req, res, next) => {
   try {
     const { project_id } = req.params;
 
-    const isUUID = /^[0-9a-f-]{36}$/i.test(project_id);
-    const column = isUUID ? 'p.id' : 'p.slug';
-
-    const result = await pool.query(
-      `SELECT p.*,
-              u.username AS owner_username,
-              u.avatar   AS owner_avatar,
-              u.bio      AS owner_bio,
-              u.reputation_score AS owner_reputation
-       FROM projects p
-       JOIN users u ON u.id = p.owner_id
-       WHERE ${column} = $1`,
-      [project_id]
-    );
-
-    const project = result.rows[0];
+    const isId = /^\d+$/.test(project_id);
+    
+    let project;
+    if (isId) {
+      project = await prisma.project.findUnique({
+        where: { id: parseInt(project_id) },
+        include: {
+          owner: {
+            select: {
+              id: true,
+              username: true,
+              avatar: true,
+              bio: true,
+              reputation_score: true,
+            }
+          }
+        }
+      });
+    } else {
+      project = await prisma.project.findUnique({
+        where: { slug: project_id },
+        include: {
+          owner: {
+            select: {
+              id: true,
+              username: true,
+              avatar: true,
+              bio: true,
+              reputation_score: true,
+            }
+          }
+        }
+      });
+    }
 
     if (!project) {
       return next(new ApiError(404, 'Project not found.'));
     }
 
+    // Check private visibility
     if (project.visibility === 'private') {
       if (!req.user || req.user.id !== project.owner_id) {
         return next(new ApiError(403, 'This project is private.'));
       }
     }
 
+    // Increment view count if not owner
     if (!req.user || req.user.id !== project.owner_id) {
-      await pool.query(
-        'UPDATE projects SET view_count = view_count + 1 WHERE id = $1',
-        [project.id]
-      );
+      await prisma.project.update({
+        where: { id: project.id },
+        data: { view_count: { increment: 1 } }
+      });
       project.view_count += 1;
     }
 
@@ -163,31 +179,25 @@ const createProject = async (req, res, next) => {
 
     const slug = createUniqueSlug(title);
 
-    const result = await pool.query(
-      `INSERT INTO projects
-         (owner_id, title, slug, description, full_description,
-          status, visibility, technologies, industries, tags,
-          problem_solved, repo_url, demo_url)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-       RETURNING *`,
-      [
-        req.user.id,
+    const newProject = await prisma.project.create({
+      data: {
+        owner_id: req.user.id,
         title,
         slug,
         description,
-        full_description    || null,
-        status              || 'idea',
-        visibility          || 'public',
-        technologies        || [],
-        industries          || [],
-        tags                || [],
-        problem_solved      || null,
-        repo_url            || null,
-        demo_url            || null,
-      ]
-    );
+        full_description: full_description || null,
+        status: status || 'idea',
+        visibility: visibility || 'public',
+        technologies: technologies || [],
+        industries: industries || [],
+        tags: tags || [],
+        problem_solved: problem_solved || null,
+        repo_url: repo_url || null,
+        demo_url: demo_url || null,
+      }
+    });
 
-    sendResponse(res, 201, result.rows[0], 'Project created.');
+    sendResponse(res, 201, newProject, 'Project created.');
   } catch (err) {
     next(err);
   }
@@ -195,37 +205,38 @@ const createProject = async (req, res, next) => {
 
 const updateProject = async (req, res, next) => {
   try {
-    const ownerCheck = await pool.query(
-      'SELECT owner_id FROM projects WHERE id = $1',
-      [req.params.project_id]
-    );
+    const { project_id } = req.params;
+    
+    // Check ownership
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true }
+    });
 
-    if (!ownerCheck.rows[0]) {
+    if (!project) {
       return next(new ApiError(404, 'Project not found.'));
     }
 
-    if (ownerCheck.rows[0].owner_id !== req.user.id && req.user.role !== 'admin') {
+    if (project.owner_id !== req.user.id && req.user.role !== 'admin') {
       return next(new ApiError(403, 'You do not own this project.'));
     }
 
     const { title, description, full_description, problem_solved, repo_url, demo_url, tags } = req.body;
 
-    const result = await pool.query(
-      `UPDATE projects
-       SET title            = COALESCE($1, title),
-           description      = COALESCE($2, description),
-           full_description = COALESCE($3, full_description),
-           problem_solved   = COALESCE($4, problem_solved),
-           repo_url         = COALESCE($5, repo_url),
-           demo_url         = COALESCE($6, demo_url),
-           tags             = COALESCE($7, tags),
-           updated_at       = NOW()
-       WHERE id = $8
-       RETURNING *`,
-      [title, description, full_description, problem_solved, repo_url, demo_url, tags, req.params.project_id]
-    );
+    const updatedProject = await prisma.project.update({
+      where: { id: parseInt(project_id) },
+      data: {
+        title: title !== undefined ? title : undefined,
+        description: description !== undefined ? description : undefined,
+        full_description: full_description !== undefined ? full_description : undefined,
+        problem_solved: problem_solved !== undefined ? problem_solved : undefined,
+        repo_url: repo_url !== undefined ? repo_url : undefined,
+        demo_url: demo_url !== undefined ? demo_url : undefined,
+        tags: tags !== undefined ? tags : undefined,
+      }
+    });
 
-    sendResponse(res, 200, result.rows[0], 'Project updated.');
+    sendResponse(res, 200, updatedProject, 'Project updated.');
   } catch (err) {
     next(err);
   }
@@ -233,22 +244,27 @@ const updateProject = async (req, res, next) => {
 
 const deleteProject = async (req, res, next) => {
   try {
-    const ownerCheck = await pool.query(
-      'SELECT owner_id, title FROM projects WHERE id = $1',
-      [req.params.project_id]
-    );
+    const { project_id } = req.params;
+    
+    // Check ownership
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true, title: true }
+    });
 
-    if (!ownerCheck.rows[0]) {
+    if (!project) {
       return next(new ApiError(404, 'Project not found.'));
     }
 
-    if (ownerCheck.rows[0].owner_id !== req.user.id && req.user.role !== 'admin') {
+    if (project.owner_id !== req.user.id && req.user.role !== 'admin') {
       return next(new ApiError(403, 'You do not own this project.'));
     }
 
-    await pool.query('DELETE FROM projects WHERE id = $1', [req.params.project_id]);
+    await prisma.project.delete({
+      where: { id: parseInt(project_id) }
+    });
 
-    sendResponse(res, 200, null, `Project "${ownerCheck.rows[0].title}" deleted.`);
+    sendResponse(res, 200, null, `Project "${project.title}" deleted.`);
   } catch (err) {
     next(err);
   }
@@ -257,28 +273,38 @@ const deleteProject = async (req, res, next) => {
 const addTechnology = async (req, res, next) => {
   try {
     const { technology } = req.body;
+    const { project_id } = req.params;
 
     if (!technology) {
       return next(new ApiError(400, 'Technology name is required.'));
     }
 
-    const ownerCheck = await pool.query(
-      'SELECT owner_id FROM projects WHERE id = $1',
-      [req.params.project_id]
-    );
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true, technologies: true }
+    });
 
-    if (!ownerCheck.rows[0]) return next(new ApiError(404, 'Project not found.'));
-    if (ownerCheck.rows[0].owner_id !== req.user.id) return next(new ApiError(403, 'Not authorized.'));
+    if (!project) {
+      return next(new ApiError(404, 'Project not found.'));
+    }
 
-    const result = await pool.query(
-      `UPDATE projects
-       SET technologies = array_append(technologies, $1), updated_at = NOW()
-       WHERE id = $2 AND NOT ($1 = ANY(technologies))
-       RETURNING technologies`,
-      [technology, req.params.project_id]
-    );
+    if (project.owner_id !== req.user.id) {
+      return next(new ApiError(403, 'Not authorized.'));
+    }
 
-    sendResponse(res, 200, result.rows[0], 'Technology added.');
+    // Check if technology already exists
+    if (!project.technologies.includes(technology)) {
+      const updatedProject = await prisma.project.update({
+        where: { id: parseInt(project_id) },
+        data: {
+          technologies: { push: technology }
+        },
+        select: { technologies: true }
+      });
+      sendResponse(res, 200, updatedProject, 'Technology added.');
+    } else {
+      sendResponse(res, 200, { technologies: project.technologies }, 'Technology already exists.');
+    }
   } catch (err) {
     next(err);
   }
@@ -286,23 +312,32 @@ const addTechnology = async (req, res, next) => {
 
 const removeTechnology = async (req, res, next) => {
   try {
-    const ownerCheck = await pool.query(
-      'SELECT owner_id FROM projects WHERE id = $1',
-      [req.params.project_id]
-    );
+    const { project_id, tech } = req.params;
 
-    if (!ownerCheck.rows[0]) return next(new ApiError(404, 'Project not found.'));
-    if (ownerCheck.rows[0].owner_id !== req.user.id) return next(new ApiError(403, 'Not authorized.'));
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true, technologies: true }
+    });
 
-    const result = await pool.query(
-      `UPDATE projects
-       SET technologies = array_remove(technologies, $1), updated_at = NOW()
-       WHERE id = $2
-       RETURNING technologies`,
-      [req.params.tech, req.params.project_id]
-    );
+    if (!project) {
+      return next(new ApiError(404, 'Project not found.'));
+    }
 
-    sendResponse(res, 200, result.rows[0], 'Technology removed.');
+    if (project.owner_id !== req.user.id) {
+      return next(new ApiError(403, 'Not authorized.'));
+    }
+
+    const updatedTechnologies = project.technologies.filter(t => t !== tech);
+
+    const updatedProject = await prisma.project.update({
+      where: { id: parseInt(project_id) },
+      data: {
+        technologies: updatedTechnologies
+      },
+      select: { technologies: true }
+    });
+
+    sendResponse(res, 200, updatedProject, 'Technology removed.');
   } catch (err) {
     next(err);
   }
@@ -311,28 +346,37 @@ const removeTechnology = async (req, res, next) => {
 const addIndustry = async (req, res, next) => {
   try {
     const { industry } = req.body;
+    const { project_id } = req.params;
 
     if (!industry) {
       return next(new ApiError(400, 'Industry name is required.'));
     }
 
-    const ownerCheck = await pool.query(
-      'SELECT owner_id FROM projects WHERE id = $1',
-      [req.params.project_id]
-    );
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true, industries: true }
+    });
 
-    if (!ownerCheck.rows[0]) return next(new ApiError(404, 'Project not found.'));
-    if (ownerCheck.rows[0].owner_id !== req.user.id) return next(new ApiError(403, 'Not authorized.'));
+    if (!project) {
+      return next(new ApiError(404, 'Project not found.'));
+    }
 
-    const result = await pool.query(
-      `UPDATE projects
-       SET industries = array_append(industries, $1), updated_at = NOW()
-       WHERE id = $2 AND NOT ($1 = ANY(industries))
-       RETURNING industries`,
-      [industry, req.params.project_id]
-    );
+    if (project.owner_id !== req.user.id) {
+      return next(new ApiError(403, 'Not authorized.'));
+    }
 
-    sendResponse(res, 200, result.rows[0], 'Industry added.');
+    if (!project.industries.includes(industry)) {
+      const updatedProject = await prisma.project.update({
+        where: { id: parseInt(project_id) },
+        data: {
+          industries: { push: industry }
+        },
+        select: { industries: true }
+      });
+      sendResponse(res, 200, updatedProject, 'Industry added.');
+    } else {
+      sendResponse(res, 200, { industries: project.industries }, 'Industry already exists.');
+    }
   } catch (err) {
     next(err);
   }
@@ -341,6 +385,7 @@ const addIndustry = async (req, res, next) => {
 const updateVisibility = async (req, res, next) => {
   try {
     const { visibility } = req.body;
+    const { project_id } = req.params;
 
     const allowed = ['public', 'private', 'unlisted'];
 
@@ -348,23 +393,279 @@ const updateVisibility = async (req, res, next) => {
       return next(new ApiError(400, "Visibility must be 'public', 'private', or 'unlisted'."));
     }
 
-    const ownerCheck = await pool.query(
-      'SELECT owner_id FROM projects WHERE id = $1',
-      [req.params.project_id]
-    );
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true }
+    });
 
-    if (!ownerCheck.rows[0]) return next(new ApiError(404, 'Project not found.'));
-    if (ownerCheck.rows[0].owner_id !== req.user.id) return next(new ApiError(403, 'Not authorized.'));
+    if (!project) {
+      return next(new ApiError(404, 'Project not found.'));
+    }
 
-    const result = await pool.query(
-      `UPDATE projects
-       SET visibility = $1, updated_at = NOW()
-       WHERE id = $2
-       RETURNING id, title, visibility`,
-      [visibility, req.params.project_id]
-    );
+    if (project.owner_id !== req.user.id) {
+      return next(new ApiError(403, 'Not authorized.'));
+    }
 
-    sendResponse(res, 200, result.rows[0], `Visibility set to ${visibility}.`);
+    const updatedProject = await prisma.project.update({
+      where: { id: parseInt(project_id) },
+      data: { visibility },
+      select: { id: true, title: true, visibility: true }
+    });
+
+    sendResponse(res, 200, updatedProject, `Visibility set to ${visibility}.`);
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+// MEDIA UPLOAD FUNCTIONS
+
+
+const { cloudinary } = require('../config/cloudinary');
+
+//Upload project thumbnail
+ 
+const uploadThumbnail = async (req, res, next) => {
+  try {
+    const { project_id } = req.params;
+
+    if (!req.file) {
+      return next(new ApiError(400, 'No file uploaded'));
+    }
+
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true, thumbnail_url: true }
+    });
+
+    if (!project) {
+      return next(new ApiError(404, 'Project not found'));
+    }
+
+    if (project.owner_id !== req.user.id) {
+      return next(new ApiError(403, 'Not authorized'));
+    }
+
+    if (project.thumbnail_url) {
+      const publicId = project.thumbnail_url.split('/').pop().split('.')[0];
+      await cloudinary.uploader.destroy(`devshowcase/projects/thumbnails/${publicId}`);
+    }
+
+    const updatedProject = await prisma.project.update({
+      where: { id: parseInt(project_id) },
+      data: { thumbnail_url: req.file.path },
+    });
+
+    sendResponse(res, 200, updatedProject, 'Thumbnail uploaded');
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+//Upload gallery images to project
+ 
+const uploadGallery = async (req, res, next) => {
+  try {
+    const { project_id } = req.params;
+
+    if (!req.files || req.files.length === 0) {
+      return next(new ApiError(400, 'No files uploaded'));
+    }
+
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true, gallery: true }
+    });
+
+    if (!project) {
+      return next(new ApiError(404, 'Project not found'));
+    }
+
+    if (project.owner_id !== req.user.id) {
+      return next(new ApiError(403, 'Not authorized'));
+    }
+
+    const imageUrls = req.files.map(file => file.path);
+    const currentGallery = project.gallery || [];
+    const newGallery = [...currentGallery, ...imageUrls];
+
+    const updatedProject = await prisma.project.update({
+      where: { id: parseInt(project_id) },
+      data: { gallery: newGallery },
+    });
+
+    sendResponse(res, 200, updatedProject, `${req.files.length} image(s) added to gallery`);
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+//Remove gallery image
+ 
+const removeGalleryImage = async (req, res, next) => {
+  try {
+    const { project_id, image_id } = req.params;
+
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true, gallery: true }
+    });
+
+    if (!project) {
+      return next(new ApiError(404, 'Project not found'));
+    }
+
+    if (project.owner_id !== req.user.id) {
+      return next(new ApiError(403, 'Not authorized'));
+    }
+
+    const imageToDelete = project.gallery?.[parseInt(image_id)];
+    if (imageToDelete) {
+      const publicId = imageToDelete.split('/').pop().split('.')[0];
+      await cloudinary.uploader.destroy(`devshowcase/projects/gallery/${publicId}`);
+    }
+
+    const newGallery = project.gallery.filter((_, index) => index !== parseInt(image_id));
+
+    const updatedProject = await prisma.project.update({
+      where: { id: parseInt(project_id) },
+      data: { gallery: newGallery },
+    });
+
+    sendResponse(res, 200, updatedProject, 'Image removed from gallery');
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+//Upload project assets (code, docs, images, videos)
+ 
+const uploadProjectAssets = async (req, res, next) => {
+  try {
+    const { project_id } = req.params;
+
+    if (!req.files || req.files.length === 0) {
+      return next(new ApiError(400, 'No files uploaded'));
+    }
+
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true, assets: true }
+    });
+
+    if (!project) {
+      return next(new ApiError(404, 'Project not found'));
+    }
+
+    if (project.owner_id !== req.user.id && req.user.role !== 'admin') {
+      return next(new ApiError(403, 'Not authorized'));
+    }
+
+    const uploadedAssets = req.files.map(file => ({
+      url: file.path,
+      filename: file.originalname,
+      type: file.mimetype,
+      size: file.size,
+      uploadedAt: new Date().toISOString(),
+    }));
+
+    const currentAssets = project.assets || [];
+    const newAssets = [...currentAssets, ...uploadedAssets];
+
+    const updatedProject = await prisma.project.update({
+      where: { id: parseInt(project_id) },
+      data: { assets: newAssets },
+    });
+
+    sendResponse(res, 200, {
+      assets: uploadedAssets,
+      total: uploadedAssets.length,
+    }, `${uploadedAssets.length} asset(s) uploaded successfully`);
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+//Delete project asset
+
+const deleteProjectAsset = async (req, res, next) => {
+  try {
+    const { project_id, asset_id } = req.params;
+
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { owner_id: true, assets: true }
+    });
+
+    if (!project) {
+      return next(new ApiError(404, 'Project not found'));
+    }
+
+    if (project.owner_id !== req.user.id && req.user.role !== 'admin') {
+      return next(new ApiError(403, 'Not authorized'));
+    }
+
+    const assetIndex = parseInt(asset_id);
+    const assetToDelete = project.assets?.[assetIndex];
+
+    if (!assetToDelete) {
+      return next(new ApiError(404, 'Asset not found'));
+    }
+
+    const publicId = assetToDelete.url.split('/').pop().split('.')[0];
+    let folder = 'devshowcase/projects/assets/other';
+    
+    if (assetToDelete.url.includes('/images/')) folder = 'devshowcase/projects/assets/images';
+    else if (assetToDelete.url.includes('/videos/')) folder = 'devshowcase/projects/assets/videos';
+    else if (assetToDelete.url.includes('/documents/')) folder = 'devshowcase/projects/assets/documents';
+    else if (assetToDelete.url.includes('/code/')) folder = 'devshowcase/projects/assets/code';
+    
+    await cloudinary.uploader.destroy(`${folder}/${publicId}`, {
+      resource_type: assetToDelete.type.startsWith('video/') ? 'video' : 
+                     assetToDelete.type.startsWith('image/') ? 'image' : 'raw'
+    });
+
+    const newAssets = project.assets.filter((_, index) => index !== assetIndex);
+
+    const updatedProject = await prisma.project.update({
+      where: { id: parseInt(project_id) },
+      data: { assets: newAssets },
+    });
+
+    sendResponse(res, 200, null, 'Asset deleted successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+//Get all project assets
+ 
+const getProjectAssets = async (req, res, next) => {
+  try {
+    const { project_id } = req.params;
+
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(project_id) },
+      select: { assets: true, visibility: true, owner_id: true }
+    });
+
+    if (!project) {
+      return next(new ApiError(404, 'Project not found'));
+    }
+
+    if (project.visibility === 'private') {
+      if (!req.user || (req.user.id !== project.owner_id && req.user.role !== 'admin')) {
+        return next(new ApiError(403, 'This project is private'));
+      }
+    }
+
+    sendResponse(res, 200, project.assets || []);
   } catch (err) {
     next(err);
   }
@@ -380,4 +681,10 @@ module.exports = {
   removeTechnology,
   addIndustry,
   updateVisibility,
+  uploadThumbnail,
+  uploadGallery,
+  removeGalleryImage,
+  uploadProjectAssets,
+  deleteProjectAsset,
+  getProjectAssets,
 };

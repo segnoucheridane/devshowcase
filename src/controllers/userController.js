@@ -1,18 +1,29 @@
-const { pool }     = require('../config/database');
 const sendResponse = require('../utils/sendResponse');
-const ApiError     = require('../utils/ApiError');
+const ApiError = require('../utils/ApiError');
+const { prisma } = require('../config/prisma');
 
 const getMyProfile = async (req, res, next) => {
   try {
-    const result = await pool.query(
-      `SELECT id, username, email, role, bio, avatar, website, github,
-              linkedin, skills, reputation_score, is_verified, created_at
-       FROM users
-       WHERE id = $1`,
-      [req.user.id]
-    );
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        bio: true,
+        avatar: true,
+        website: true,
+        github: true,
+        linkedin: true,
+        skills: true,
+        reputation_score: true,
+        is_verified: true,
+        created_at: true,
+      }
+    });
 
-    sendResponse(res, 200, result.rows[0]);
+    sendResponse(res, 200, user);
   } catch (err) {
     next(err);
   }
@@ -22,21 +33,31 @@ const updateMyProfile = async (req, res, next) => {
   try {
     const { bio, website, github, linkedin, skills } = req.body;
 
-    const result = await pool.query(
-      `UPDATE users
-       SET bio      = COALESCE($1, bio),
-           website  = COALESCE($2, website),
-           github   = COALESCE($3, github),
-           linkedin = COALESCE($4, linkedin),
-           skills   = COALESCE($5, skills),
-           updated_at = NOW()
-       WHERE id = $6
-       RETURNING id, username, email, role, bio, avatar, website,
-                 github, linkedin, skills, reputation_score`,
-      [bio, website, github, linkedin, skills, req.user.id]
-    );
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        bio: bio !== undefined ? bio : undefined,
+        website: website !== undefined ? website : undefined,
+        github: github !== undefined ? github : undefined,
+        linkedin: linkedin !== undefined ? linkedin : undefined,
+        skills: skills !== undefined ? skills : undefined,
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        role: true,
+        bio: true,
+        avatar: true,
+        website: true,
+        github: true,
+        linkedin: true,
+        skills: true,
+        reputation_score: true,
+      }
+    });
 
-    sendResponse(res, 200, result.rows[0], 'Profile updated.');
+    sendResponse(res, 200, updatedUser, 'Profile updated.');
   } catch (err) {
     next(err);
   }
@@ -44,19 +65,28 @@ const updateMyProfile = async (req, res, next) => {
 
 const getUserProfile = async (req, res, next) => {
   try {
-    const result = await pool.query(
-      `SELECT id, username, role, bio, avatar, website, github,
-              linkedin, skills, reputation_score, created_at
-       FROM users
-       WHERE id = $1 AND is_active = TRUE`,
-      [req.params.user_id]
-    );
+    const user = await prisma.user.findUnique({
+      where: { id: parseInt(req.params.user_id), is_active: true },
+      select: {
+        id: true,
+        username: true,
+        role: true,
+        bio: true,
+        avatar: true,
+        website: true,
+        github: true,
+        linkedin: true,
+        skills: true,
+        reputation_score: true,
+        created_at: true,
+      }
+    });
 
-    if (!result.rows[0]) {
+    if (!user) {
       return next(new ApiError(404, 'User not found.'));
     }
 
-    sendResponse(res, 200, result.rows[0]);
+    sendResponse(res, 200, user);
   } catch (err) {
     next(err);
   }
@@ -64,16 +94,27 @@ const getUserProfile = async (req, res, next) => {
 
 const getUserProjects = async (req, res, next) => {
   try {
-    const result = await pool.query(
-      `SELECT id, title, slug, description, status, technologies,
-              thumbnail_url, view_count, like_count, created_at
-       FROM projects
-       WHERE owner_id = $1 AND visibility = 'public'
-       ORDER BY created_at DESC`,
-      [req.params.user_id]
-    );
+    const projects = await prisma.project.findMany({
+      where: {
+        owner_id: parseInt(req.params.user_id),
+        visibility: 'public',
+      },
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        description: true,
+        status: true,
+        technologies: true,
+        thumbnail_url: true,
+        view_count: true,
+        like_count: true,
+        created_at: true,
+      }
+    });
 
-    sendResponse(res, 200, result.rows);
+    sendResponse(res, 200, projects);
   } catch (err) {
     next(err);
   }
@@ -89,15 +130,90 @@ const switchRole = async (req, res, next) => {
       return next(new ApiError(400, `Role must be one of: ${allowed.join(', ')}`));
     }
 
-    const result = await pool.query(
-      `UPDATE users
-       SET role = $1, updated_at = NOW()
-       WHERE id = $2
-       RETURNING id, username, role`,
-      [role, req.user.id]
-    );
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { role },
+      select: {
+        id: true,
+        username: true,
+        role: true,
+      }
+    });
 
-    sendResponse(res, 200, result.rows[0], 'Role updated.');
+    sendResponse(res, 200, updatedUser, 'Role updated.');
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+
+// AVATAR UPLOAD FUNCTIONS
+
+const { cloudinary } = require('../config/cloudinary');
+
+
+//Upload user avatar
+
+const uploadAvatar = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return next(new ApiError(400, 'No file uploaded'));
+    }
+
+    const currentUser = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { avatar: true }
+    });
+
+    if (currentUser.avatar) {
+      const publicId = currentUser.avatar.split('/').pop().split('.')[0];
+      await cloudinary.uploader.destroy(`devshowcase/avatars/${publicId}`);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { avatar: req.file.path },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        avatar: true,
+      }
+    });
+
+    sendResponse(res, 200, updatedUser, 'Avatar updated successfully');
+  } catch (err) {
+    next(err);
+  }
+};
+
+ //Delete user avatar
+ 
+const deleteAvatar = async (req, res, next) => {
+  try {
+    const currentUser = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { avatar: true }
+    });
+
+    if (currentUser.avatar) {
+      const publicId = currentUser.avatar.split('/').pop().split('.')[0];
+      await cloudinary.uploader.destroy(`devshowcase/avatars/${publicId}`);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { avatar: null },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        avatar: true,
+      }
+    });
+
+    sendResponse(res, 200, updatedUser, 'Avatar removed');
   } catch (err) {
     next(err);
   }
@@ -109,4 +225,6 @@ module.exports = {
   getUserProfile,
   getUserProjects,
   switchRole,
+  uploadAvatar,
+  deleteAvatar,
 };

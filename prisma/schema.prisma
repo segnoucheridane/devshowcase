@@ -1,0 +1,143 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            Int       @id @default(autoincrement())
+  username      String    @unique @db.VarChar(50)
+  email         String    @unique @db.VarChar(100)
+  password      String    @db.VarChar(255)
+  role          String    @default("developer") @db.VarChar(20)
+  bio           String?
+  avatar        String?   @db.VarChar(255)
+  website       String?   @db.VarChar(255)
+  github        String?   @db.VarChar(255)
+  linkedin      String?   @db.VarChar(255)
+  skills        String[]  @default([])
+  reputation_score Int    @default(0)
+  is_verified   Boolean   @default(false)
+  is_active     Boolean   @default(true)
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  projects      Project[]
+  collaborations Collaboration[]
+  collaborationsInvited Collaboration[] @relation("UserInvites")
+  notifications Notification[]
+  time_logs     TimeLog[]
+}
+
+model Project {
+  id              Int       @id @default(autoincrement())
+  owner_id        Int
+  title           String    @db.VarChar(100)
+  slug            String    @unique @db.VarChar(120)
+  description     String
+  full_description String?
+  status          String    @default("idea") @db.VarChar(20)
+  visibility      String    @default("public") @db.VarChar(20)
+  technologies    String[]  @default([])
+  industries      String[]  @default([])
+  tags            String[]  @default([])
+  problem_solved  String?
+  repo_url        String?   @db.VarChar(255)
+  demo_url        String?   @db.VarChar(255)
+  thumbnail_url   String?   @db.VarChar(255)
+  view_count      Int       @default(0)
+  like_count      Int       @default(0)
+  is_featured     Boolean   @default(false)
+  is_funding_open Boolean   @default(false)
+  is_for_sale     Boolean   @default(false)
+  funding_goal    Decimal?  @db.Decimal(10, 2)
+  funding_raised  Decimal?  @default(0) @db.Decimal(10, 2)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  owner          User           @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  stages         Stage[]
+  milestones     Milestone[]
+  collaborations Collaboration[]
+  gallery       String[]  @default([])
+  assets        Json?     @default("[]")
+}
+
+model Stage {
+  id          Int       @id @default(autoincrement())
+  project_id  Int
+  name        String    @db.VarChar(50)
+  description String?
+  order_index Int       @default(0)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  project    Project      @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  milestones Milestone[]
+}
+
+model Milestone {
+  id           Int       @id @default(autoincrement())
+  stage_id     Int
+  project_id   Int
+  title        String    @db.VarChar(200)
+  description  String?
+  order_index  Int       @default(0)
+  completed_at DateTime?
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  stage    Stage      @relation(fields: [stage_id], references: [id], onDelete: Cascade)
+  project  Project    @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  time_logs TimeLog[]
+  media         Json?     @default("[]")
+}
+
+model TimeLog {
+  id           Int       @id @default(autoincrement())
+  milestone_id Int
+  user_id      Int
+  hours        Decimal   @db.Decimal(5, 2)
+  note         String?
+  logged_at    DateTime  @default(now())
+
+  milestone Milestone @relation(fields: [milestone_id], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}
+
+model Collaboration {
+  id          Int       @id @default(autoincrement())
+  project_id  Int
+  user_id     Int
+  role        String    @default("contributor") @db.VarChar(20)
+  permissions Json      @default("{\"canEdit\": false, \"canInvite\": false, \"canDelete\": false}")
+  status      String    @default("pending") @db.VarChar(20)
+  invited_by  Int?
+  joined_at   DateTime?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  project    Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  user       User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  inviter    User?   @relation("UserInvites", fields: [invited_by], references: [id])
+
+  @@unique([project_id, user_id])
+}
+
+model Notification {
+  id         Int       @id @default(autoincrement())
+  user_id    Int
+  type       String    @db.VarChar(50)
+  title      String    @db.VarChar(200)
+  message    String
+  data       Json?
+  is_read    Boolean   @default(false)
+  read_at    DateTime?
+  action_url String?   @db.VarChar(500)
+  created_at DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+}

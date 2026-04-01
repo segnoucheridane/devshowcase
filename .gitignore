@@ -4,3 +4,9 @@ env.local
 .env.production 
 uploads/
 *.log
+.DS_Store
+Thumbs.db
+
+
+
+

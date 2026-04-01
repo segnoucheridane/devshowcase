@@ -1,52 +1,51 @@
-const { pool }     = require('../config/database');
 const sendResponse = require('../utils/sendResponse');
-const ApiError     = require('../utils/ApiError');
+const ApiError = require('../utils/ApiError');
+const { prisma } = require('../config/prisma');
 
 const listUsers = async (req, res, next) => {
   try {
     const { page = 1, limit = 20, role, search } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    const params = [];
-    let where    = 'WHERE 1=1';
+    let where = {};
 
     if (role) {
-      params.push(role);
-      where += ` AND role = $${params.length}`;
+      where.role = role;
     }
 
     if (search) {
-      params.push(`%${search}%`);
-      where += ` AND (username ILIKE $${params.length} OR email ILIKE $${params.length})`;
+      where.OR = [
+        { username: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ];
     }
 
-    params.push(parseInt(limit));
-    const limitIndex = params.length;
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          role: true,
+          is_active: true,
+          is_verified: true,
+          reputation_score: true,
+          created_at: true,
+        }
+      }),
+      prisma.user.count({ where })
+    ]);
 
-    params.push(offset);
-    const offsetIndex = params.length;
-
-    const rows = await pool.query(
-      `SELECT id, username, email, role, is_active, is_verified, reputation_score, created_at
-       FROM users
-       ${where}
-       ORDER BY created_at DESC
-       LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
-      params
-    );
-
-    const countResult = await pool.query(
-      `SELECT COUNT(*) FROM users ${where}`,
-      params.slice(0, params.length - 2)
-    );
-
-    const total = parseInt(countResult.rows[0].count);
-
-    sendResponse(res, 200, rows.rows, null, {
+    sendResponse(res, 200, users, null, {
       pagination: {
         total,
-        page:  parseInt(page),
-        pages: Math.ceil(total / parseInt(limit)),
+        page: parseInt(page),
+        pages: Math.ceil(total / take),
       },
     });
   } catch (err) {
@@ -56,19 +55,21 @@ const listUsers = async (req, res, next) => {
 
 const suspendUser = async (req, res, next) => {
   try {
-    const result = await pool.query(
-      `UPDATE users
-       SET is_active = FALSE, updated_at = NOW()
-       WHERE id = $1
-       RETURNING id, username, is_active`,
-      [req.params.user_id]
-    );
+    const user = await prisma.user.update({
+      where: { id: parseInt(req.params.user_id) },
+      data: { is_active: false },
+      select: {
+        id: true,
+        username: true,
+        is_active: true,
+      }
+    });
 
-    if (!result.rows[0]) {
+    if (!user) {
       return next(new ApiError(404, 'User not found.'));
     }
 
-    sendResponse(res, 200, result.rows[0], 'User suspended.');
+    sendResponse(res, 200, user, 'User suspended.');
   } catch (err) {
     next(err);
   }
@@ -77,26 +78,27 @@ const suspendUser = async (req, res, next) => {
 const changeUserRole = async (req, res, next) => {
   try {
     const { role } = req.body;
-
     const allowed = ['user', 'developer', 'investor', 'recruiter', 'admin'];
 
     if (!allowed.includes(role)) {
       return next(new ApiError(400, 'Invalid role provided.'));
     }
 
-    const result = await pool.query(
-      `UPDATE users
-       SET role = $1, updated_at = NOW()
-       WHERE id = $2
-       RETURNING id, username, role`,
-      [role, req.params.user_id]
-    );
+    const user = await prisma.user.update({
+      where: { id: parseInt(req.params.user_id) },
+      data: { role },
+      select: {
+        id: true,
+        username: true,
+        role: true,
+      }
+    });
 
-    if (!result.rows[0]) {
+    if (!user) {
       return next(new ApiError(404, 'User not found.'));
     }
 
-    sendResponse(res, 200, result.rows[0], 'User role updated.');
+    sendResponse(res, 200, user, 'User role updated.');
   } catch (err) {
     next(err);
   }
@@ -105,27 +107,45 @@ const changeUserRole = async (req, res, next) => {
 const listAllProjects = async (req, res, next) => {
   try {
     const { page = 1, limit = 20 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const take = parseInt(limit);
 
-    const rows = await pool.query(
-      `SELECT p.id, p.title, p.slug, p.status, p.visibility,
-              p.is_featured, p.view_count, p.created_at,
-              u.username AS owner
-       FROM projects p
-       JOIN users u ON u.id = p.owner_id
-       ORDER BY p.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [parseInt(limit), offset]
-    );
+    const [projects, total] = await Promise.all([
+      prisma.project.findMany({
+        skip,
+        take,
+        orderBy: { created_at: 'desc' },
+        include: {
+          owner: {
+            select: {
+              username: true,
+            }
+          }
+        },
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          status: true,
+          visibility: true,
+          is_featured: true,
+          view_count: true,
+          created_at: true,
+          owner: {
+            select: {
+              username: true,
+            }
+          }
+        }
+      }),
+      prisma.project.count()
+    ]);
 
-    const countResult = await pool.query('SELECT COUNT(*) FROM projects');
-    const total       = parseInt(countResult.rows[0].count);
-
-    sendResponse(res, 200, rows.rows, null, {
+    sendResponse(res, 200, projects, null, {
       pagination: {
         total,
-        page:  parseInt(page),
-        pages: Math.ceil(total / parseInt(limit)),
+        page: parseInt(page),
+        pages: Math.ceil(total / take),
       },
     });
   } catch (err) {
@@ -135,20 +155,27 @@ const listAllProjects = async (req, res, next) => {
 
 const featureProject = async (req, res, next) => {
   try {
-    const result = await pool.query(
-      `UPDATE projects
-       SET is_featured = NOT is_featured, updated_at = NOW()
-       WHERE id = $1
-       RETURNING id, title, is_featured`,
-      [req.params.project_id]
-    );
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(req.params.project_id) },
+      select: { is_featured: true }
+    });
 
-    if (!result.rows[0]) {
+    if (!project) {
       return next(new ApiError(404, 'Project not found.'));
     }
 
-    const msg = result.rows[0].is_featured ? 'Project featured.' : 'Project unfeatured.';
-    sendResponse(res, 200, result.rows[0], msg);
+    const updatedProject = await prisma.project.update({
+      where: { id: parseInt(req.params.project_id) },
+      data: { is_featured: !project.is_featured },
+      select: {
+        id: true,
+        title: true,
+        is_featured: true,
+      }
+    });
+
+    const msg = updatedProject.is_featured ? 'Project featured.' : 'Project unfeatured.';
+    sendResponse(res, 200, updatedProject, msg);
   } catch (err) {
     next(err);
   }
@@ -156,16 +183,20 @@ const featureProject = async (req, res, next) => {
 
 const removeProject = async (req, res, next) => {
   try {
-    const result = await pool.query(
-      'DELETE FROM projects WHERE id = $1 RETURNING id, title',
-      [req.params.project_id]
-    );
+    const project = await prisma.project.findUnique({
+      where: { id: parseInt(req.params.project_id) },
+      select: { id: true, title: true }
+    });
 
-    if (!result.rows[0]) {
+    if (!project) {
       return next(new ApiError(404, 'Project not found.'));
     }
 
-    sendResponse(res, 200, null, `Project "${result.rows[0].title}" has been removed.`);
+    await prisma.project.delete({
+      where: { id: parseInt(req.params.project_id) }
+    });
+
+    sendResponse(res, 200, null, `Project "${project.title}" has been removed.`);
   } catch (err) {
     next(err);
   }
@@ -189,27 +220,23 @@ const resolveReport = async (req, res, next) => {
 
 const getPlatformStats = async (req, res, next) => {
   try {
-    const [users, projects] = await Promise.all([
-      pool.query(
-        `SELECT COUNT(*) AS total,
-                SUM(CASE WHEN is_active THEN 1 ELSE 0 END) AS active
-         FROM users`
-      ),
-      pool.query(
-        `SELECT COUNT(*) AS total,
-                COALESCE(SUM(view_count), 0) AS total_views
-         FROM projects`
-      ),
+    const [totalUsers, activeUsers, totalProjects, totalViews] = await Promise.all([
+      prisma.user.count(),
+      prisma.user.count({ where: { is_active: true } }),
+      prisma.project.count(),
+      prisma.project.aggregate({
+        _sum: { view_count: true }
+      })
     ]);
 
     sendResponse(res, 200, {
       users: {
-        total:  parseInt(users.rows[0].total),
-        active: parseInt(users.rows[0].active),
+        total: totalUsers,
+        active: activeUsers,
       },
       projects: {
-        total:      parseInt(projects.rows[0].total),
-        totalViews: parseInt(projects.rows[0].total_views),
+        total: totalProjects,
+        totalViews: totalViews._sum.view_count || 0,
       },
     });
   } catch (err) {
