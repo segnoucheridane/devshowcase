@@ -20,6 +20,7 @@ const avatarStorage = new CloudinaryStorage({
   },
 });
 
+
 // 2. Project Thumbnails (images only)
 
 const thumbnailStorage = new CloudinaryStorage({
@@ -48,54 +49,10 @@ const galleryStorage = new CloudinaryStorage({
 
 const projectAssetsStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
-  params: async (req, file) => {
-    const fileType = file.mimetype;
-    let resourceType = 'auto';
-    let folder = 'devshowcase/projects/assets';
-    let allowedFormats = [];
-
-    if (fileType.startsWith('image/')) {
-      resourceType = 'image';
-      folder = 'devshowcase/projects/assets/images';
-      allowedFormats = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'];
-    } 
-    else if (fileType.startsWith('video/')) {
-      resourceType = 'video';
-      folder = 'devshowcase/projects/assets/videos';
-      allowedFormats = ['mp4', 'mov', 'webm', 'avi'];
-    }
-    else if (fileType === 'application/pdf') {
-      resourceType = 'raw';
-      folder = 'devshowcase/projects/assets/documents';
-      allowedFormats = ['pdf'];
-    }
-    else if (fileType === 'application/msword' || fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-      resourceType = 'raw';
-      folder = 'devshowcase/projects/assets/documents';
-      allowedFormats = ['doc', 'docx'];
-    }
-    else if (fileType === 'application/zip' || fileType === 'application/x-zip-compressed' || fileType === 'application/x-tar' || fileType === 'application/gzip') {
-      resourceType = 'raw';
-      folder = 'devshowcase/projects/assets/code';
-      allowedFormats = ['zip', 'tar', 'gz'];
-    }
-    else if (fileType === 'text/plain' || fileType === 'text/markdown') {
-      resourceType = 'raw';
-      folder = 'devshowcase/projects/assets/documents';
-      allowedFormats = ['txt', 'md'];
-    }
-    else {
-      resourceType = 'raw';
-      folder = 'devshowcase/projects/assets/other';
-    }
-
-    return {
-      folder: folder,
-      resource_type: resourceType,
-      allowed_formats: allowedFormats,
-      use_filename: true,
-      unique_filename: true,
-    };
+  params: {
+    folder: 'devshowcase/projects/assets',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'pdf', 'doc', 'docx', 'zip', 'tar', 'gz', 'txt', 'md'],
+    resource_type: 'auto',
   },
 });
 
@@ -104,24 +61,10 @@ const projectAssetsStorage = new CloudinaryStorage({
 
 const milestoneMediaStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
-  params: async (req, file) => {
-    const fileType = file.mimetype;
-    let resourceType = 'auto';
-    let folder = 'devshowcase/projects/milestones';
-
-    if (fileType.startsWith('image/')) {
-      resourceType = 'image';
-    } else if (fileType.startsWith('video/')) {
-      resourceType = 'video';
-    } else {
-      resourceType = 'raw';
-    }
-
-    return {
-      folder: folder,
-      resource_type: resourceType,
-      allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'pdf', 'doc', 'docx', 'txt', 'md'],
-    };
+  params: {
+    folder: 'devshowcase/projects/milestones',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'pdf', 'doc', 'docx', 'txt', 'md'],
+    resource_type: 'auto',
   },
 });
 
@@ -132,9 +75,8 @@ const licenseStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
     folder: 'devshowcase/licenses',
-    resource_type: 'raw',
     allowed_formats: ['pdf', 'txt', 'doc', 'docx', 'md'],
-    use_filename: true,
+    resource_type: 'raw',
   },
 });
 

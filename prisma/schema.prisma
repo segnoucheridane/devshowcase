@@ -7,6 +7,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+
+// USER MODEL
+
+
 model User {
   id            Int       @id @default(autoincrement())
   username      String    @unique @db.VarChar(50)
@@ -22,15 +26,36 @@ model User {
   reputation_score Int    @default(0)
   is_verified   Boolean   @default(false)
   is_active     Boolean   @default(true)
+  email_verification_token String?
+  password_reset_token String?
+  password_reset_expires DateTime?
   created_at    DateTime  @default(now())
   updated_at    DateTime  @updatedAt
 
-  projects      Project[]
-  collaborations Collaboration[]
-  collaborationsInvited Collaboration[] @relation("UserInvites")
-  notifications Notification[]
-  time_logs     TimeLog[]
+  projects                Project[]
+  collaborations          Collaboration[]
+  notifications           Notification[]
+  time_logs               TimeLog[]
+  listingsForSale         Listing[]
+  purchasesMade           Purchase[] @relation("UserPurchases")
+  purchasesSold           Purchase[] @relation("UserSales")
+  notificationPreferences NotificationPreference?
+  fundingRequests         FundingRequest[]
+  investments             Investment[]
+  receivedEndorsements    Endorsement[] @relation("UserEndorsements")
+  givenEndorsements       Endorsement[] @relation("EndorserEndorsements")
+  activities              ActivityLog[]
+  forks                   Fork[]
+  tutorials               Tutorial[]
+  pitches                 Pitch[]
+  ownershipVerifications  OwnershipVerification[]
+
+  @@map("users")
 }
+
+
+// PROJECT MODEL
+
 
 model Project {
   id              Int       @id @default(autoincrement())
@@ -48,6 +73,8 @@ model Project {
   repo_url        String?   @db.VarChar(255)
   demo_url        String?   @db.VarChar(255)
   thumbnail_url   String?   @db.VarChar(255)
+  gallery         String[]  @default([])
+  assets          Json?     @default("[]")
   view_count      Int       @default(0)
   like_count      Int       @default(0)
   is_featured     Boolean   @default(false)
@@ -55,6 +82,7 @@ model Project {
   is_for_sale     Boolean   @default(false)
   funding_goal    Decimal?  @db.Decimal(10, 2)
   funding_raised  Decimal?  @default(0) @db.Decimal(10, 2)
+  is_verified     Boolean   @default(false)
   created_at      DateTime  @default(now())
   updated_at      DateTime  @updatedAt
 
@@ -62,9 +90,24 @@ model Project {
   stages         Stage[]
   milestones     Milestone[]
   collaborations Collaboration[]
-  gallery       String[]  @default([])
-  assets        Json?     @default("[]")
+  listing        Listing?
+  fundingRequest FundingRequest?
+  tutorial       Tutorial?
+  originalForks  Fork[]         @relation("OriginalProject")
+  forkedFrom     Fork?          @relation("ForkedProject")
+  pitch          Pitch?
+  ownershipVerification OwnershipVerification?
+  projectLicense       ProjectLicense?
+
+  @@index([owner_id], map: "idx_projects_owner")
+  @@index([status], map: "idx_projects_status")
+  @@index([visibility], map: "idx_projects_visibility")
+  @@map("projects")
 }
+
+
+// TIMELINE MODELS
+
 
 model Stage {
   id          Int       @id @default(autoincrement())
@@ -77,6 +120,8 @@ model Stage {
 
   project    Project      @relation(fields: [project_id], references: [id], onDelete: Cascade)
   milestones Milestone[]
+
+  @@map("stages")
 }
 
 model Milestone {
@@ -87,13 +132,15 @@ model Milestone {
   description  String?
   order_index  Int       @default(0)
   completed_at DateTime?
+  media        Json?     @default("[]")
   created_at   DateTime  @default(now())
   updated_at   DateTime  @updatedAt
 
   stage    Stage      @relation(fields: [stage_id], references: [id], onDelete: Cascade)
   project  Project    @relation(fields: [project_id], references: [id], onDelete: Cascade)
   time_logs TimeLog[]
-  media         Json?     @default("[]")
+
+  @@map("milestones")
 }
 
 model TimeLog {
@@ -106,7 +153,13 @@ model TimeLog {
 
   milestone Milestone @relation(fields: [milestone_id], references: [id], onDelete: Cascade)
   user      User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("time_logs")
 }
+
+
+// COLLABORATION MODEL
+
 
 model Collaboration {
   id          Int       @id @default(autoincrement())
@@ -122,10 +175,14 @@ model Collaboration {
 
   project    Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
   user       User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  inviter    User?   @relation("UserInvites", fields: [invited_by], references: [id])
 
   @@unique([project_id, user_id])
+  @@map("collaborations")
 }
+
+
+// NOTIFICATION MODELS
+
 
 model Notification {
   id         Int       @id @default(autoincrement())
@@ -140,4 +197,246 @@ model Notification {
   created_at DateTime  @default(now())
 
   user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model NotificationPreference {
+  id                   Int       @id @default(autoincrement())
+  user_id              Int       @unique
+  email_collaboration  Boolean   @default(true)
+  email_funding        Boolean   @default(true)
+  email_purchase       Boolean   @default(true)
+  push_collaboration   Boolean   @default(true)
+  push_funding         Boolean   @default(true)
+  push_purchase        Boolean   @default(true)
+  in_app_collaboration Boolean   @default(true)
+  in_app_funding       Boolean   @default(true)
+  in_app_purchase      Boolean   @default(true)
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("notification_preferences")
+}
+
+
+// MARKETPLACE MODELS
+
+
+model Listing {
+  id          Int       @id @default(autoincrement())
+  project_id  Int       @unique
+  seller_id   Int
+  title       String    @db.VarChar(100)
+  description String?
+  price       Decimal   @db.Decimal(10, 2)
+  price_type  String    @default("fixed") @db.VarChar(20)
+  currency    String    @default("USD") @db.VarChar(3)
+  status      String    @default("active") @db.VarChar(20)
+  views       Int       @default(0)
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  project   Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  seller    User    @relation(fields: [seller_id], references: [id], onDelete: Cascade)
+  purchases Purchase[]
+
+  @@map("listings")
+}
+
+model Purchase {
+  id             Int       @id @default(autoincrement())
+  listing_id     Int
+  buyer_id       Int
+  seller_id      Int
+  amount         Decimal   @db.Decimal(10, 2)
+  currency       String    @default("USD") @db.VarChar(3)
+  status         String    @default("pending") @db.VarChar(20)
+  transaction_id String?   @unique @db.VarChar(100)
+  license_key    String?   @db.VarChar(255)
+  purchased_at   DateTime  @default(now())
+
+  listing Listing @relation(fields: [listing_id], references: [id], onDelete: Cascade)
+  buyer   User    @relation("UserPurchases", fields: [buyer_id], references: [id], onDelete: Cascade)
+  seller  User    @relation("UserSales", fields: [seller_id], references: [id], onDelete: Cascade)
+
+  @@map("purchases")
+}
+
+
+// FUNDING MODELS
+
+
+model FundingRequest {
+  id             Int       @id @default(autoincrement())
+  project_id     Int       @unique
+  owner_id       Int
+  goal_amount    Decimal   @db.Decimal(10, 2)
+  current_amount Decimal   @default(0) @db.Decimal(10, 2)
+  deadline       DateTime
+  description    String?
+  status         String    @default("active") @db.VarChar(20)
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+
+  project     Project      @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  owner       User         @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+  investments Investment[]
+
+  @@map("funding_requests")
+}
+
+model Investment {
+  id                Int       @id @default(autoincrement())
+  funding_request_id Int
+  investor_id       Int
+  amount            Decimal   @db.Decimal(10, 2)
+  type              String    @default("investment") @db.VarChar(20)
+  status            String    @default("pending") @db.VarChar(20)
+  transaction_id    String?   @unique @db.VarChar(100)
+  message           String?
+  completed_at      DateTime?
+  created_at        DateTime  @default(now())
+
+  fundingRequest FundingRequest @relation(fields: [funding_request_id], references: [id], onDelete: Cascade)
+  investor       User           @relation(fields: [investor_id], references: [id], onDelete: Cascade)
+
+  @@map("investments")
+}
+
+
+// REPUTATION & ENDORSEMENTS MODELS
+
+
+model Endorsement {
+  id          Int       @id @default(autoincrement())
+  user_id     Int
+  endorsed_by Int
+  skill       String    @db.VarChar(100)
+  message     String?
+  created_at  DateTime  @default(now())
+
+  user     User @relation("UserEndorsements", fields: [user_id], references: [id], onDelete: Cascade)
+  endorser User @relation("EndorserEndorsements", fields: [endorsed_by], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, endorsed_by, skill])
+  @@map("endorsements")
+}
+
+model ActivityLog {
+  id          Int       @id @default(autoincrement())
+  user_id     Int
+  action      String    @db.VarChar(50)
+  entity_type String    @db.VarChar(50)
+  entity_id   Int
+  metadata    Json?
+  created_at  DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("activity_logs")
+}
+
+
+// LEARNING MODE MODELS
+
+
+model Tutorial {
+  id          Int       @id @default(autoincrement())
+  project_id  Int       @unique
+  owner_id    Int
+  title       String    @db.VarChar(200)
+  description String?
+  steps       Json      @default("[]")
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  owner   User    @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@map("tutorials")
+}
+
+model Fork {
+  id                Int       @id @default(autoincrement())
+  original_project_id Int
+  forked_by         Int
+  fork_name         String?   @db.VarChar(100)
+  forked_project_id Int?      @unique
+  created_at        DateTime  @default(now())
+
+  originalProject Project @relation("OriginalProject", fields: [original_project_id], references: [id], onDelete: Cascade)
+  forkedBy        User    @relation(fields: [forked_by], references: [id], onDelete: Cascade)
+  forkedProject   Project? @relation("ForkedProject", fields: [forked_project_id], references: [id], onDelete: SetNull)
+
+  @@unique([original_project_id, forked_by])
+  @@map("forks")
+}
+
+
+// PITCH MODE MODELS
+
+
+model Pitch {
+  id              Int       @id @default(autoincrement())
+  project_id      Int       @unique
+  owner_id        Int
+  market_analysis Json?
+  roadmap         Json?
+  revenue_model   Json?
+  visibility      String    @default("public") @db.VarChar(20)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  owner   User    @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@map("pitches")
+}
+
+
+// LICENSING & OWNERSHIP MODELS
+
+
+model LicenseTemplate {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique @db.VarChar(100)
+  type        String    @db.VarChar(50)
+  content     String
+  is_default  Boolean   @default(false)
+  created_at  DateTime  @default(now())
+
+  projectLicenses ProjectLicense[]
+
+  @@map("license_templates")
+}
+
+model ProjectLicense {
+  id           Int       @id @default(autoincrement())
+  project_id   Int       @unique
+  license_id   Int
+  custom_terms String?
+  applied_at   DateTime  @default(now())
+
+  project Project         @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  license LicenseTemplate @relation(fields: [license_id], references: [id], onDelete: Cascade)
+
+  @@map("project_licenses")
+}
+
+model OwnershipVerification {
+  id             Int       @id @default(autoincrement())
+  project_id     Int       @unique
+  owner_id       Int
+  status         String    @default("pending") @db.VarChar(20)
+  blockchain_hash String?  @db.VarChar(255)
+  verified_at    DateTime?
+  requested_at   DateTime  @default(now())
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  owner   User    @relation(fields: [owner_id], references: [id], onDelete: Cascade)
+
+  @@map("ownership_verifications")
 }

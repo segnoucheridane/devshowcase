@@ -11,7 +11,18 @@ const userRoutes     = require('./routes/usersRoute');
 const adminRoutes    = require('./routes/adminRoute');
 const projectRoutes  = require('./routes/projectsRoute');
 const timelineRoutes = require('./routes/timelineRoute');
-const collaborationRoutes = require('./routes/collaborationsRoute');  // ADD THIS
+const collaborationRoutes = require('./routes/collaborationsRoute');
+const searchRoutes   = require('./routes/searchRoute');  
+const marketplaceRoutes = require('./routes/marketplaceRoute');
+const notificationRoutes = require('./routes/notificationsRoute');
+const fundingRoutes = require('./routes/fundingRoute');
+const reputationRoutes = require('./routes/reputationRoute');
+const analyticsRoutes = require('./routes/analyticsRoute');
+const learningRoutes = require('./routes/learningRoute');
+const pitchRoutes = require('./routes/pitchRoute');
+const aiRoutes = require('./routes/aiRoute');
+const licensingRoutes = require('./routes/licensingRoute');
+
 
 const app = express();
 
@@ -44,7 +55,18 @@ app.use('/api/users',    userRoutes);
 app.use('/api/admin',    adminRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/projects', timelineRoutes);
-app.use('/api/collaborations', collaborationRoutes);  // ADD THIS
+app.use('/api/collaborations', collaborationRoutes);
+app.use('/api/search', searchRoutes);        
+app.use('/api/discovery', searchRoutes);   
+app.use('/api/marketplace', marketplaceRoutes); 
+app.use('/api/notifications', notificationRoutes); 
+app.use('/api', fundingRoutes);
+app.use('/api', reputationRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/learning', learningRoutes);
+app.use('/api/pitch', pitchRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/licensing', licensingRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

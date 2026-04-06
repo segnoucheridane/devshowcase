@@ -9,6 +9,7 @@
 - **ORM:** Prisma (v5.22.0)
 - **File Storage:** Cloudinary
 - **Authentication:** JWT
+- **Real-time:** Socket.io
 
 ## Features Implemented
 
