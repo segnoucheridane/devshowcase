@@ -40,7 +40,7 @@ Analytics Dashboard - View analytics, demo interactions, engagement metrics, tim
 
 Learning Mode - Convert projects to tutorials, build replay, fork projects, list forked projects
 
-Pitch Mode - Create pitch presentation, market analysis, roadmap, revenue model, PDF export, toggle visibility
+
 
 AI Features - Collaborator recommendations, investor suggestions, project recommendations, improvement suggestions, generate summary, generate pitch draft, generate description, skill match
 
