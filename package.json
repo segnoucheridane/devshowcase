@@ -7,7 +7,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "licen": "node prisma/licen.js",
-    "vercel-build": "npm install --legacy-peer-deps && npx prisma generate && npx prisma db push && node prisma/licen.js"
+    "vercel-build": "npm install --legacy-peer-deps && npx prisma generate && npx prisma db push && node prisma/licen.js",
+    "build": "npx prisma generate"
+    
     
   },
   "keywords": [],
