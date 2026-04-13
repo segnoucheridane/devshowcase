@@ -1,6 +1,6 @@
 const sendResponse = require('../utils/sendResponse');
 const ApiError = require('../utils/ApiError');
-const reputationService = require('../services/ReputationService');
+const reputationService = require('../services/reputationService');
 
 /**
  * Get user's reputation score breakdown
