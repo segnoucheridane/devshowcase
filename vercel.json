@@ -2,14 +2,14 @@
   "version": 2,
   "builds": [
     {
-      "source": "server.js",
+      "src": "api/index.js",
       "use": "@vercel/node"
     }
   ],
   "routes": [
     {
-      "source": "/(.*)",
-      "destination": "server.js"
+      "src": "/(.*)",
+      "dest": "api/index.js"
     }
   ],
   "buildCommand": "npm install --legacy-peer-deps && npx prisma generate"
