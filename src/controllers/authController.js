@@ -4,7 +4,7 @@ const generateToken = require('../utils/generateToken');
 const sendResponse = require('../utils/sendResponse');
 const ApiError = require('../utils/ApiError');
 const { prisma } = require('../config/prisma');
-const userService = require('../services/UserService');
+const userService = require('../services/userService');
 
 const register = async (req, res, next) => {
   try {

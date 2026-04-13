@@ -1,6 +1,6 @@
 const sendResponse = require('../utils/sendResponse');
 const ApiError = require('../utils/ApiError');
-const searchService = require('../services/SearchService');
+const searchService = require('../services/searchService');
 
 
  //Search projects with filters

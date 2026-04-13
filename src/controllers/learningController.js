@@ -1,6 +1,6 @@
 const sendResponse = require('../utils/sendResponse');
 const ApiError = require('../utils/ApiError');
-const learningService = require('../services/LearningService');
+const learningService = require('../services/learningService');
 
 /**
  * Convert project into a tutorial

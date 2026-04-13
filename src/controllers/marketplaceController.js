@@ -1,6 +1,6 @@
 const sendResponse = require('../utils/sendResponse');
 const ApiError = require('../utils/ApiError');
-const marketplaceService = require('../services/MarketplaceService');
+const marketplaceService = require('../services/marketplaceService');
 
 /**
  * Set pricing for a project

@@ -1,6 +1,6 @@
 const sendResponse = require('../utils/sendResponse');
 const ApiError = require('../utils/ApiError');
-const fundingService = require('../services/FundingService');
+const fundingService = require('../services/fundingService');
 
 /**
  * Create a funding request
