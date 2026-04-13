@@ -48,7 +48,7 @@ if (process.env.NODE_ENV === 'development') {
 
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-app.use('/api', apiLimiter);
+//app.use('/api', apiLimiter);
 
 app.get('/health', (req, res) => {
   res.json({
